@@ -6,7 +6,6 @@
     <title>Password-Protected Photo Gallery (Offline)</title>
     <script src="https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js"></script>
     <script src="https://unpkg.com/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
-    <!-- Added for ZIP export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
@@ -15,12 +14,14 @@
         h1, h2 { color: #111; }
         section { margin: 2rem 0; padding: 1.5rem; border: 1px solid #ddd; border-radius: 10px; background: #f9f9f9; }
         .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-        input, button, label { padding: 10px; font-size: 1rem; border-radius: 6px; }
+        input, button, label, select { padding: 10px; font-size: 1rem; border-radius: 6px; }
         button { background: #238636; color: white; border: none; cursor: pointer; font-weight: 600; }
         button:hover { background: #2ea043; }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
         button.danger { background: #c94a4a; }
         button.danger:hover { background: #b33d3d; }
+        #searchInput { flex: 1 1 300px; min-width: 220px; border: 1px solid #ccc; }
+        #sortSelect { min-width: 160px; }
         #gallery { 
             display: grid; 
             grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); 
@@ -32,6 +33,10 @@
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: white;
         }
         .gallery-item img { 
             width: 100%; 
@@ -39,6 +44,18 @@
             display: block;
             aspect-ratio: 4/3;
             object-fit: cover;
+            flex: 1;
+        }
+        .gallery-item .caption {
+            padding: 8px 4px;
+            font-size: 0.85rem;
+            color: #333;
+            text-align: center;
+            width: 100%;
+            background: rgba(255,255,255,0.9);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .select-checkbox {
             position: absolute;
@@ -49,10 +66,18 @@
             accent-color: #238636;
             cursor: pointer;
             opacity: 0.9;
+            z-index: 2;
         }
         .select-mode .select-checkbox { opacity: 1; }
         #status { color: #444; font-weight: 500; min-height: 1.4rem; margin-top: 8px; }
         .note { font-size: 0.92rem; color: #555; margin: 8px 0; }
+        #noResults {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 2rem;
+            color: #777;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -82,14 +107,21 @@
 
     <section>
         <h2>Your Photos</h2>
-        <div class="controls" style="margin-bottom: 1rem;">
+        <div class="controls" style="margin-bottom: 1rem; gap: 16px; flex-wrap: wrap;">
+            <input type="text" id="searchInput" placeholder="Search by filename..." disabled>
+            <select id="sortSelect" disabled>
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="name-asc">Name A–Z</option>
+                <option value="name-desc">Name Z–A</option>
+            </select>
             <button id="toggleSelectBtn" disabled onclick="toggleSelectMode()">Select Images</button>
             <button id="selectAllBtn"   disabled onclick="selectAll(true)">Select All</button>
             <button id="deselectAllBtn" disabled onclick="selectAll(false)">Deselect All</button>
             <button id="deleteSelectedBtn" class="danger" disabled onclick="deleteSelected()">Delete Selected</button>
             <button id="downloadSelectedBtn" disabled onclick="downloadSelectedZip()">Download Selected (ZIP)</button>
         </div>
-        <div id="gallery" class="select-mode"></div>
+        <div id="gallery"></div>
     </section>
 
     <script>
@@ -97,6 +129,8 @@
         let masterKey = null;
         let masterSalt = null;
         let selectMode = false;
+        let searchTerm = "";
+        let sortMode = localStorage.getItem("gallerySortMode") || "newest";
 
         const STATUS = document.getElementById("status");
         const GALLERY_STATUS = document.getElementById("galleryStatus");
@@ -108,6 +142,48 @@
         const DESELECT_ALL_BTN = document.getElementById("deselectAllBtn");
         const DELETE_SELECTED_BTN = document.getElementById("deleteSelectedBtn");
         const DOWNLOAD_SELECTED_BTN = document.getElementById("downloadSelectedBtn");
+        const SEARCH_INPUT = document.getElementById("searchInput");
+        const SORT_SELECT = document.getElementById("sortSelect");
+
+        // Lazy loading observer
+        let io = null;
+        if ('IntersectionObserver' in window) {
+            io = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        if (img.dataset.fullSrc) {
+                            img.src = img.dataset.fullSrc;
+                            img.removeAttribute("data-fullSrc");
+                            img.onload = () => { img.style.background = "none"; };
+                        }
+                        io.unobserve(img);
+                    }
+                });
+            }, { rootMargin: "200px 0px", threshold: 0.01 });
+        }
+
+        function debounce(fn, delay = 300) {
+            let timer;
+            return function (...args) {
+                clearTimeout(timer);
+                timer = setTimeout(() => fn.apply(this, args), delay);
+            };
+        }
+
+        const debouncedRender = debounce(renderGallery);
+
+        SORT_SELECT.value = sortMode;
+        SORT_SELECT.addEventListener("change", (e) => {
+            sortMode = e.target.value;
+            localStorage.setItem("gallerySortMode", sortMode);
+            renderGallery();
+        });
+
+        SEARCH_INPUT.addEventListener("input", () => {
+            searchTerm = SEARCH_INPUT.value.trim().toLowerCase();
+            debouncedRender();
+        });
 
         window.addEventListener('beforeunload', (e) => {
             if (masterKey && currentGallery.images.length > 0) {
@@ -128,63 +204,49 @@
             SELECT_ALL_BTN.disabled = !selectMode;
             DESELECT_ALL_BTN.disabled = !selectMode;
             updateSelectionButtons();
+            renderGallery();
         }
 
         function selectAll(checked) {
-            document.querySelectorAll('.select-checkbox').forEach(cb => {
-                cb.checked = checked;
-            });
+            document.querySelectorAll('.select-checkbox').forEach(cb => cb.checked = checked);
             updateSelectionButtons();
         }
 
         function deleteSelected() {
             if (!confirm("Delete selected photo(s) permanently?")) return;
-            
             const toDelete = new Set();
             document.querySelectorAll('.select-checkbox:checked').forEach(cb => {
-                const idx = parseInt(cb.dataset.index, 10);
-                toDelete.add(idx);
+                toDelete.add(parseInt(cb.dataset.index, 10));
             });
-
             currentGallery.images = currentGallery.images.filter((_, i) => !toDelete.has(i));
             renderGallery();
-            toggleSelectMode(); // exit mode after delete
-            STATUS.textContent = `Deleted ${toDelete.size} photo(s).`;
+            toggleSelectMode();
+            STATUS.textContent = `Deleted ${toDelete.size} photo(s). Remember to save the gallery.`;
         }
 
         async function downloadSelectedZip() {
-            const checkedBoxes = document.querySelectorAll('.select-checkbox:checked');
-            if (checkedBoxes.length === 0) return;
-
+            const checked = document.querySelectorAll('.select-checkbox:checked');
+            if (!checked.length) return;
             STATUS.textContent = "Creating ZIP...";
             const zip = new JSZip();
-
-            checkedBoxes.forEach(cb => {
+            checked.forEach(cb => {
                 const idx = parseInt(cb.dataset.index, 10);
                 const img = currentGallery.images[idx];
                 const binary = atob(img.base64);
-                const len = binary.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                    bytes[i] = binary.charCodeAt(i);
-                }
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                 zip.file(img.name || `photo-${idx+1}.jpg`, bytes);
             });
-
             try {
                 const content = await zip.generateAsync({type: "blob"});
                 saveAs(content, `selected-photos-${new Date().toISOString().slice(0,10)}.zip`);
-                STATUS.textContent = `Downloaded ${checkedBoxes.length} photo(s) as ZIP`;
+                STATUS.textContent = `Downloaded ${checked.length} photo(s) as ZIP`;
                 toggleSelectMode();
             } catch (err) {
                 STATUS.textContent = "";
                 alert("ZIP creation failed: " + err.message);
             }
         }
-
-        // ────────────────────────────────────────────────
-        //  Existing crypto / gallery functions (unchanged)
-        // ────────────────────────────────────────────────
 
         async function deriveKey(password, salt) {
             const argon = await argon2.hash({
@@ -201,30 +263,21 @@
 
         function toBase64(uint8) {
             let binary = '';
-            for (let i = 0; i < uint8.byteLength; i++) {
-                binary += String.fromCharCode(uint8[i]);
-            }
+            for (let i = 0; i < uint8.byteLength; i++) binary += String.fromCharCode(uint8[i]);
             return btoa(binary);
         }
 
         function fromBase64(base64) {
-            const binaryString = atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             return bytes;
         }
 
         async function encryptData(data, key) {
-            const encoder = new TextEncoder();
-            const buffer = encoder.encode(JSON.stringify(data));
+            const buffer = new TextEncoder().encode(JSON.stringify(data));
             const CHUNK_SIZE = 1048576;
-            const chunks = [];
-            const chunkIVs = [];
-            const chunkLengths = [];
-
+            const chunks = [], chunkIVs = [], chunkLengths = [];
             for (let offset = 0; offset < buffer.length; offset += CHUNK_SIZE) {
                 const end = Math.min(offset + CHUNK_SIZE, buffer.length);
                 const chunk = buffer.subarray(offset, end);
@@ -235,31 +288,23 @@
                 chunks.push(encArr);
                 chunkLengths.push(encArr.length);
             }
-
-            const totalLen = chunkLengths.reduce((a, b) => a + b, 0);
-            const combined = new Uint8Array(totalLen);
+            const combined = new Uint8Array(chunkLengths.reduce((a,b)=>a+b,0));
             let pos = 0;
             chunks.forEach(c => { combined.set(c, pos); pos += c.length; });
-
             return JSON.stringify({
                 chunks: chunks.length,
                 chunkLengths,
-                chunkIVs: chunkIVs.map(iv => toBase64(iv)),
+                chunkIVs: chunkIVs.map(toBase64),
                 data: toBase64(combined)
             });
         }
 
         async function decryptData(jsonStr, key) {
             const payload = JSON.parse(jsonStr);
-            if (!payload.chunks || !payload.chunkLengths || !payload.chunkIVs || !payload.data) {
-                throw new Error("Missing required fields");
-            }
-
             const combined = fromBase64(payload.data);
-            const chunkIVs = payload.chunkIVs.map(b64 => fromBase64(b64));
+            const chunkIVs = payload.chunkIVs.map(fromBase64);
             let offset = 0;
             const plainChunks = [];
-
             for (let i = 0; i < payload.chunks; i++) {
                 const len = payload.chunkLengths[i];
                 const cipherChunk = combined.subarray(offset, offset + len);
@@ -271,12 +316,10 @@
                 );
                 plainChunks.push(new Uint8Array(dec));
             }
-
-            const fullPlain = new Uint8Array(plainChunks.reduce((sum, c) => sum + c.length, 0));
+            const full = new Uint8Array(plainChunks.reduce((s,c)=>s+c.length,0));
             let pos = 0;
-            plainChunks.forEach(c => { fullPlain.set(c, pos); pos += c.length; });
-
-            return JSON.parse(new TextDecoder().decode(fullPlain));
+            plainChunks.forEach(c => { full.set(c, pos); pos += c.length; });
+            return JSON.parse(new TextDecoder().decode(full));
         }
 
         async function initializeNewGallery() {
@@ -296,24 +339,20 @@
         document.getElementById("loadGalleryFile").addEventListener("change", async e => {
             const file = e.target.files[0];
             if (!file) return;
-
             STATUS.textContent = "Loading...";
             const text = await file.text();
             const pw = prompt("Enter password:");
             if (!pw) return;
-
             try {
-                const fullPayload = JSON.parse(text);
-                if (!fullPayload.salt) throw new Error("Missing salt");
-
-                const salt = fromBase64(fullPayload.salt);
+                const payload = JSON.parse(text);
+                if (!payload.salt) throw new Error("Missing salt");
+                const salt = fromBase64(payload.salt);
                 masterKey = await deriveKey(pw, salt);
                 masterSalt = salt;
-
-                const { salt: _, ...cipherPart } = fullPayload;
+                const { salt: _, ...cipherPart } = payload;
                 currentGallery = await decryptData(JSON.stringify(cipherPart), masterKey);
-
                 enableGalleryControls();
+                SORT_SELECT.value = sortMode;
                 renderGallery();
                 GALLERY_STATUS.textContent = `Loaded (${currentGallery.images.length} photos)`;
                 STATUS.textContent = "";
@@ -328,40 +367,58 @@
             ADD_BTN.disabled = false;
             CHANGE_PW_BTN.disabled = false;
             TOGGLE_SELECT_BTN.disabled = false;
+            SEARCH_INPUT.disabled = false;
+            SORT_SELECT.disabled = false;
         }
 
         async function addPhotos() {
             const files = document.getElementById("files").files;
-            if (!files.length || !masterKey) return alert("No gallery or no files selected.");
-
-            STATUS.textContent = "Processing...";
+            if (!files.length || !masterKey) return alert("No gallery or files selected.");
+            STATUS.textContent = "Processing photos...";
             let added = 0;
-
             for (const file of files) {
                 try {
-                    const compressed = await imageCompression(file, {
+                    const fullCompressed = await imageCompression(file, {
                         maxSizeMB: 0.7,
                         maxWidthOrHeight: 1600,
                         useWebWorker: true,
-                        fileType: "image/jpeg"
+                        fileType: "image/jpeg",
+                        initialQuality: 0.92
                     });
-                    const base64 = await new Promise((res, rej) => {
-                        const reader = new FileReader();
-                        reader.onload = () => res(reader.result.split(',')[1]);
-                        reader.onerror = rej;
-                        reader.readAsDataURL(compressed);
+                    const fullBase64 = await new Promise((res, rej) => {
+                        const r = new FileReader();
+                        r.onload = () => res(r.result.split(',')[1]);
+                        r.onerror = rej;
+                        r.readAsDataURL(fullCompressed);
                     });
+
+                    const thumbCompressed = await imageCompression(fullCompressed, {
+                        maxSizeMB: 0.08,
+                        maxWidthOrHeight: 320,
+                        useWebWorker: true,
+                        fileType: "image/jpeg",
+                        initialQuality: 0.55
+                    });
+                    const thumbBase64 = await new Promise((res, rej) => {
+                        const r = new FileReader();
+                        r.onload = () => res(r.result.split(',')[1]);
+                        r.onerror = rej;
+                        r.readAsDataURL(thumbCompressed);
+                    });
+
+                    const name = (file.name || "photo.jpg").replace(/\.[^/.]+$/, "") + ".jpg";
                     currentGallery.images.push({
-                        name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
+                        name,
+                        searchName: name.toLowerCase(),
                         timestamp: Date.now() + Math.random(),
-                        base64
+                        base64: fullBase64,
+                        thumbBase64
                     });
                     added++;
                 } catch (e) {
                     console.warn("Failed to process:", file.name, e);
                 }
             }
-
             renderGallery();
             STATUS.textContent = added ? `${added} photo(s) added.` : "No images processed.";
             document.getElementById("files").value = "";
@@ -369,37 +426,91 @@
 
         function renderGallery() {
             const container = document.getElementById("gallery");
-            container.innerHTML = currentGallery.images.length ? "" : "<p>No photos yet. Add some!</p>";
+            container.innerHTML = "";
 
-            currentGallery.images.forEach((img, index) => {
-                const item = document.createElement("div");
-                item.className = "gallery-item";
+            let sortedImages = [...currentGallery.images];
 
-                const cb = document.createElement("input");
-                cb.type = "checkbox";
-                cb.className = "select-checkbox";
-                cb.dataset.index = index;
-                cb.addEventListener("change", updateSelectionButtons);
-
-                const el = document.createElement("img");
-                el.src = `data:image/jpeg;base64,${img.base64}`;
-                el.alt = img.name;
-                el.loading = "lazy";
-
-                item.appendChild(cb);
-                item.appendChild(el);
-                container.appendChild(item);
-            });
-
-            if (selectMode) {
-                updateSelectionButtons();
+            if (sortMode === "newest") {
+                sortedImages.sort((a, b) => b.timestamp - a.timestamp);
+            } else if (sortMode === "oldest") {
+                sortedImages.sort((a, b) => a.timestamp - b.timestamp);
+            } else if (sortMode === "name-asc") {
+                sortedImages.sort((a, b) => a.name.localeCompare(b.name));
+            } else if (sortMode === "name-desc") {
+                sortedImages.sort((a, b) => b.name.localeCompare(a.name));
             }
+
+            const term = searchTerm.toLowerCase();
+            const filtered = sortedImages
+                .map(img => ({
+                    img,
+                    originalIndex: currentGallery.images.indexOf(img)
+                }))
+                .filter(({ img }) => (img.searchName || img.name.toLowerCase()).includes(term));
+
+            const sortLabel = {
+                newest: "Newest first",
+                oldest: "Oldest first",
+                "name-asc": "Name A–Z",
+                "name-desc": "Name Z–A"
+            }[sortMode] || "Custom";
+
+            if (filtered.length === 0) {
+                if (currentGallery.images.length > 0) {
+                    container.innerHTML = `<div id="noResults">No photos match "${searchTerm}"</div>`;
+                } else {
+                    container.innerHTML = "<p>No photos yet. Add some!</p>";
+                }
+            } else {
+                filtered.forEach(({ img, originalIndex }) => {
+                    const item = document.createElement("div");
+                    item.className = "gallery-item";
+
+                    const cb = document.createElement("input");
+                    cb.type = "checkbox";
+                    cb.className = "select-checkbox";
+                    cb.dataset.index = originalIndex;
+                    cb.addEventListener("change", updateSelectionButtons);
+                    if (!selectMode) cb.style.display = "none";
+
+                    const el = document.createElement("img");
+                    el.alt = img.name;
+                    el.width = 240;
+                    el.height = 180;
+                    el.style.aspectRatio = "4/3";
+                    el.style.background = "#f0f0f0";
+                    el.src = img.thumbBase64 
+                        ? `data:image/jpeg;base64,${img.thumbBase64}`
+                        : `data:image/jpeg;base64,${img.base64}`;
+                    el.loading = "lazy";
+
+                    if (img.thumbBase64) {
+                        el.dataset.fullSrc = `data:image/jpeg;base64,${img.base64}`;
+                    }
+
+                    if (io) io.observe(el);
+
+                    const caption = document.createElement("div");
+                    caption.className = "caption";
+                    caption.textContent = img.name || "Untitled";
+
+                    item.appendChild(cb);
+                    item.appendChild(el);
+                    item.appendChild(caption);
+                    container.appendChild(item);
+                });
+            }
+
+            GALLERY_STATUS.textContent = searchTerm
+                ? `${filtered.length} matching photo${filtered.length !== 1 ? 's' : ''} (${sortLabel})`
+                : `${currentGallery.images.length} photo${currentGallery.images.length !== 1 ? 's' : ''} (${sortLabel})`;
+
+            if (selectMode) updateSelectionButtons();
         }
 
         async function downloadEncryptedGallery() {
             if (!masterKey) return alert("No gallery loaded");
             if (currentGallery.images.length > 40 && !confirm("Large gallery — may be slow. Continue?")) return;
-
             STATUS.textContent = "Encrypting...";
             try {
                 const cipher = await encryptData(currentGallery, masterKey);
@@ -415,20 +526,16 @@
 
         async function changePassword() {
             if (!masterKey) return alert("No gallery loaded");
-
             const newPw = prompt("New password (≥12 chars):");
             if (!newPw || newPw.length < 12) return alert("Too short.");
             if (newPw !== prompt("Confirm:")) return alert("Mismatch.");
-
             try {
                 const newSalt = crypto.getRandomValues(new Uint8Array(16));
                 const newKey = await deriveKey(newPw, newSalt);
                 const cipher = await encryptData(currentGallery, newKey);
                 const payload = JSON.parse(cipher);
                 payload.salt = toBase64(newSalt);
-
                 downloadFile(`gallery-newpw-${new Date().toISOString().slice(0,10)}.enc.json`, JSON.stringify(payload), "application/json");
-
                 masterKey = newKey;
                 masterSalt = newSalt;
                 alert("Password updated. Use the new file from now on.");
@@ -442,9 +549,18 @@
             masterKey = null;
             masterSalt = null;
             selectMode = false;
+            searchTerm = "";
+            SEARCH_INPUT.value = "";
+            if (io) io.disconnect();
+            document.querySelectorAll('#gallery img').forEach(img => {
+                img.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E";
+                img.removeAttribute('data-fullSrc');
+            });
             renderGallery();
-            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled = TOGGLE_SELECT_BTN.disabled = true;
-            SELECT_ALL_BTN.disabled = DESELECT_ALL_BTN.disabled = DELETE_SELECTED_BTN.disabled = DOWNLOAD_SELECTED_BTN.disabled = true;
+            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled = 
+            TOGGLE_SELECT_BTN.disabled = SEARCH_INPUT.disabled = SORT_SELECT.disabled = true;
+            SELECT_ALL_BTN.disabled = DESELECT_ALL_BTN.disabled = 
+            DELETE_SELECTED_BTN.disabled = DOWNLOAD_SELECTED_BTN.disabled = true;
             STATUS.textContent = GALLERY_STATUS.textContent = "";
         }
 
@@ -457,6 +573,10 @@
             a.click();
             URL.revokeObjectURL(url);
         }
+
+        // Initial disable
+        SEARCH_INPUT.disabled = true;
+        SORT_SELECT.disabled = true;
     </script>
 </body>
 </html>
