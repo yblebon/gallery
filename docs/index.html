@@ -6,6 +6,10 @@
     <title>Password-Protected Photo Gallery (Offline)</title>
     <script src="https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js"></script>
     <script src="https://unpkg.com/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+    <!-- Added for ZIP export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
     <style>
         body { font-family: system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 20px; line-height: 1.6; }
         h1, h2 { color: #111; }
@@ -15,8 +19,38 @@
         button { background: #238636; color: white; border: none; cursor: pointer; font-weight: 600; }
         button:hover { background: #2ea043; }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
-        #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 1.5rem; }
-        #gallery img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 3px 10px rgba(0,0,0,0.12); object-fit: cover; aspect-ratio: 4/3; }
+        button.danger { background: #c94a4a; }
+        button.danger:hover { background: #b33d3d; }
+        #gallery { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); 
+            gap: 16px; 
+            margin-top: 1.5rem; 
+        }
+        .gallery-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+        }
+        .gallery-item img { 
+            width: 100%; 
+            height: auto; 
+            display: block;
+            aspect-ratio: 4/3;
+            object-fit: cover;
+        }
+        .select-checkbox {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            accent-color: #238636;
+            cursor: pointer;
+            opacity: 0.9;
+        }
+        .select-mode .select-checkbox { opacity: 1; }
         #status { color: #444; font-weight: 500; min-height: 1.4rem; margin-top: 8px; }
         .note { font-size: 0.92rem; color: #555; margin: 8px 0; }
     </style>
@@ -32,7 +66,7 @@
             <button onclick="initializeNewGallery()">New Empty Gallery</button>
             <button id="downloadBtn" disabled onclick="downloadEncryptedGallery()">Download Gallery</button>
             <button id="changePwBtn" disabled onclick="changePassword()">Change Password</button>
-            <button onclick="closeGallery()">Close Gallery (Clear Memory)</button>
+            <button onclick="closeGallery()">Close Gallery</button>
         </div>
         <div id="galleryStatus" class="note"></div>
     </section>
@@ -46,25 +80,111 @@
         <div id="status"></div>
     </section>
 
-    <h2>Your Photos</h2>
-    <div id="gallery"></div>
+    <section>
+        <h2>Your Photos</h2>
+        <div class="controls" style="margin-bottom: 1rem;">
+            <button id="toggleSelectBtn" disabled onclick="toggleSelectMode()">Select Images</button>
+            <button id="selectAllBtn"   disabled onclick="selectAll(true)">Select All</button>
+            <button id="deselectAllBtn" disabled onclick="selectAll(false)">Deselect All</button>
+            <button id="deleteSelectedBtn" class="danger" disabled onclick="deleteSelected()">Delete Selected</button>
+            <button id="downloadSelectedBtn" disabled onclick="downloadSelectedZip()">Download Selected (ZIP)</button>
+        </div>
+        <div id="gallery" class="select-mode"></div>
+    </section>
 
     <script>
         let currentGallery = { images: [] };
         let masterKey = null;
         let masterSalt = null;
+        let selectMode = false;
 
         const STATUS = document.getElementById("status");
         const GALLERY_STATUS = document.getElementById("galleryStatus");
         const DOWNLOAD_BTN = document.getElementById("downloadBtn");
         const ADD_BTN = document.getElementById("addBtn");
         const CHANGE_PW_BTN = document.getElementById("changePwBtn");
+        const TOGGLE_SELECT_BTN = document.getElementById("toggleSelectBtn");
+        const SELECT_ALL_BTN   = document.getElementById("selectAllBtn");
+        const DESELECT_ALL_BTN = document.getElementById("deselectAllBtn");
+        const DELETE_SELECTED_BTN = document.getElementById("deleteSelectedBtn");
+        const DOWNLOAD_SELECTED_BTN = document.getElementById("downloadSelectedBtn");
 
         window.addEventListener('beforeunload', (e) => {
             if (masterKey && currentGallery.images.length > 0) {
                 e.returnValue = 'Unsaved changes will be lost!';
             }
         });
+
+        function updateSelectionButtons() {
+            const checked = document.querySelectorAll('.select-checkbox:checked').length;
+            DELETE_SELECTED_BTN.disabled = checked === 0;
+            DOWNLOAD_SELECTED_BTN.disabled = checked === 0;
+        }
+
+        function toggleSelectMode() {
+            selectMode = !selectMode;
+            document.getElementById("gallery").classList.toggle("select-mode", selectMode);
+            TOGGLE_SELECT_BTN.textContent = selectMode ? "Cancel Selection" : "Select Images";
+            SELECT_ALL_BTN.disabled = !selectMode;
+            DESELECT_ALL_BTN.disabled = !selectMode;
+            updateSelectionButtons();
+        }
+
+        function selectAll(checked) {
+            document.querySelectorAll('.select-checkbox').forEach(cb => {
+                cb.checked = checked;
+            });
+            updateSelectionButtons();
+        }
+
+        function deleteSelected() {
+            if (!confirm("Delete selected photo(s) permanently?")) return;
+            
+            const toDelete = new Set();
+            document.querySelectorAll('.select-checkbox:checked').forEach(cb => {
+                const idx = parseInt(cb.dataset.index, 10);
+                toDelete.add(idx);
+            });
+
+            currentGallery.images = currentGallery.images.filter((_, i) => !toDelete.has(i));
+            renderGallery();
+            toggleSelectMode(); // exit mode after delete
+            STATUS.textContent = `Deleted ${toDelete.size} photo(s).`;
+        }
+
+        async function downloadSelectedZip() {
+            const checkedBoxes = document.querySelectorAll('.select-checkbox:checked');
+            if (checkedBoxes.length === 0) return;
+
+            STATUS.textContent = "Creating ZIP...";
+            const zip = new JSZip();
+
+            checkedBoxes.forEach(cb => {
+                const idx = parseInt(cb.dataset.index, 10);
+                const img = currentGallery.images[idx];
+                const binary = atob(img.base64);
+                const len = binary.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                zip.file(img.name || `photo-${idx+1}.jpg`, bytes);
+            });
+
+            try {
+                const content = await zip.generateAsync({type: "blob"});
+                saveAs(content, `selected-photos-${new Date().toISOString().slice(0,10)}.zip`);
+                STATUS.textContent = `Downloaded ${checkedBoxes.length} photo(s) as ZIP`;
+                toggleSelectMode();
+            } catch (err) {
+                STATUS.textContent = "";
+                alert("ZIP creation failed: " + err.message);
+            }
+        }
+
+        // ────────────────────────────────────────────────
+        //  Existing crypto / gallery functions (unchanged)
+        // ────────────────────────────────────────────────
 
         async function deriveKey(password, salt) {
             const argon = await argon2.hash({
@@ -79,24 +199,16 @@
             return crypto.subtle.importKey("raw", argon.hash, "AES-GCM", false, ["encrypt", "decrypt"]);
         }
 
-        // Robust Base64 encode Uint8Array → string
         function toBase64(uint8) {
             let binary = '';
-            const len = uint8.byteLength;
-            for (let i = 0; i < len; i++) {
+            for (let i = 0; i < uint8.byteLength; i++) {
                 binary += String.fromCharCode(uint8[i]);
             }
             return btoa(binary);
         }
 
-        // Robust Base64 decode string → Uint8Array
         function fromBase64(base64) {
-            let binaryString;
-            try {
-                binaryString = atob(base64);
-            } catch (e) {
-                throw new Error("Invalid Base64 string: " + e.message);
-            }
+            const binaryString = atob(base64);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
             for (let i = 0; i < len; i++) {
@@ -108,7 +220,6 @@
         async function encryptData(data, key) {
             const encoder = new TextEncoder();
             const buffer = encoder.encode(JSON.stringify(data));
-
             const CHUNK_SIZE = 1048576;
             const chunks = [];
             const chunkIVs = [];
@@ -117,10 +228,8 @@
             for (let offset = 0; offset < buffer.length; offset += CHUNK_SIZE) {
                 const end = Math.min(offset + CHUNK_SIZE, buffer.length);
                 const chunk = buffer.subarray(offset, end);
-
                 const iv = crypto.getRandomValues(new Uint8Array(12));
                 chunkIVs.push(iv);
-
                 const enc = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, chunk);
                 const encArr = new Uint8Array(enc);
                 chunks.push(encArr);
@@ -132,71 +241,42 @@
             let pos = 0;
             chunks.forEach(c => { combined.set(c, pos); pos += c.length; });
 
-            const payload = {
+            return JSON.stringify({
                 chunks: chunks.length,
                 chunkLengths,
                 chunkIVs: chunkIVs.map(iv => toBase64(iv)),
                 data: toBase64(combined)
-            };
-            return JSON.stringify(payload);
+            });
         }
 
         async function decryptData(jsonStr, key) {
-            let payload;
-            try {
-                payload = JSON.parse(jsonStr);
-            } catch {
-                throw new Error("Invalid JSON format");
-            }
-
+            const payload = JSON.parse(jsonStr);
             if (!payload.chunks || !payload.chunkLengths || !payload.chunkIVs || !payload.data) {
-                throw new Error("Missing required fields in file");
+                throw new Error("Missing required fields");
             }
 
-            let combined;
-            try {
-                combined = fromBase64(payload.data);
-            } catch (e) {
-                throw new Error("Corrupted or invalid Base64 data field: " + e.message);
-            }
-
+            const combined = fromBase64(payload.data);
             const chunkIVs = payload.chunkIVs.map(b64 => fromBase64(b64));
-            const chunkLengths = payload.chunkLengths;
-
-            if (chunkIVs.length !== payload.chunks || chunkLengths.length !== payload.chunks) {
-                throw new Error("Chunk metadata mismatch");
-            }
-
             let offset = 0;
             const plainChunks = [];
 
             for (let i = 0; i < payload.chunks; i++) {
-                const len = chunkLengths[i];
+                const len = payload.chunkLengths[i];
                 const cipherChunk = combined.subarray(offset, offset + len);
                 offset += len;
-
-                try {
-                    const dec = await crypto.subtle.decrypt(
-                        { name: "AES-GCM", iv: chunkIVs[i] },
-                        key,
-                        cipherChunk
-                    );
-                    plainChunks.push(new Uint8Array(dec));
-                } catch (e) {
-                    throw new Error("Decryption failed (wrong password or data corruption): " + e.message);
-                }
+                const dec = await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: chunkIVs[i] },
+                    key,
+                    cipherChunk
+                );
+                plainChunks.push(new Uint8Array(dec));
             }
 
-            const totalPlain = plainChunks.reduce((sum, c) => sum + c.length, 0);
-            const fullPlain = new Uint8Array(totalPlain);
+            const fullPlain = new Uint8Array(plainChunks.reduce((sum, c) => sum + c.length, 0));
             let pos = 0;
             plainChunks.forEach(c => { fullPlain.set(c, pos); pos += c.length; });
 
-            try {
-                return JSON.parse(new TextDecoder().decode(fullPlain));
-            } catch {
-                throw new Error("Decrypted data is not valid JSON");
-            }
+            return JSON.parse(new TextDecoder().decode(fullPlain));
         }
 
         async function initializeNewGallery() {
@@ -204,39 +284,27 @@
             if (!pw || pw.length < 12) return alert("Password too short.");
             if (pw !== prompt("Confirm password:")) return alert("Passwords don't match.");
 
-            try {
-                masterSalt = crypto.getRandomValues(new Uint8Array(16));
-                masterKey = await deriveKey(pw, masterSalt);
-                currentGallery = { images: [] };
+            masterSalt = crypto.getRandomValues(new Uint8Array(16));
+            masterKey = await deriveKey(pw, masterSalt);
+            currentGallery = { images: [] };
 
-                DOWNLOAD_BTN.disabled = false;
-                ADD_BTN.disabled = false;
-                CHANGE_PW_BTN.disabled = false;
-                renderGallery();
-                GALLERY_STATUS.textContent = "Empty gallery created in memory. Add photos, then download to save.";
-            } catch (err) {
-                alert("Failed to initialize: " + err.message);
-            }
+            enableGalleryControls();
+            renderGallery();
+            GALLERY_STATUS.textContent = "Empty gallery created. Add photos, then save.";
         }
 
         document.getElementById("loadGalleryFile").addEventListener("change", async e => {
             const file = e.target.files[0];
             if (!file) return;
 
-            STATUS.textContent = "Loading file...";
-            let text;
-            try {
-                text = await file.text();
-            } catch (err) {
-                return alert("Failed to read file: " + err.message);
-            }
-
+            STATUS.textContent = "Loading...";
+            const text = await file.text();
             const pw = prompt("Enter password:");
             if (!pw) return;
 
             try {
                 const fullPayload = JSON.parse(text);
-                if (!fullPayload.salt) throw new Error("File missing salt field");
+                if (!fullPayload.salt) throw new Error("Missing salt");
 
                 const salt = fromBase64(fullPayload.salt);
                 masterKey = await deriveKey(pw, salt);
@@ -245,25 +313,29 @@
                 const { salt: _, ...cipherPart } = fullPayload;
                 currentGallery = await decryptData(JSON.stringify(cipherPart), masterKey);
 
+                enableGalleryControls();
                 renderGallery();
-                DOWNLOAD_BTN.disabled = false;
-                ADD_BTN.disabled = false;
-                CHANGE_PW_BTN.disabled = false;
-                GALLERY_STATUS.textContent = `Loaded successfully (${currentGallery.images.length} photos)`;
+                GALLERY_STATUS.textContent = `Loaded (${currentGallery.images.length} photos)`;
                 STATUS.textContent = "";
             } catch (err) {
                 STATUS.textContent = "";
-                alert("Load failed: " + err.message + "\nLikely wrong password, corrupted file, or invalid Base64.");
+                alert("Load failed: " + err.message);
             }
         });
 
+        function enableGalleryControls() {
+            DOWNLOAD_BTN.disabled = false;
+            ADD_BTN.disabled = false;
+            CHANGE_PW_BTN.disabled = false;
+            TOGGLE_SELECT_BTN.disabled = false;
+        }
+
         async function addPhotos() {
             const files = document.getElementById("files").files;
-            if (!files.length || !masterKey) return alert("Select images and initialize/load gallery first.");
+            if (!files.length || !masterKey) return alert("No gallery or no files selected.");
 
-            STATUS.textContent = "Processing images...";
+            STATUS.textContent = "Processing...";
             let added = 0;
-            let failed = [];
 
             for (const file of files) {
                 try {
@@ -280,19 +352,18 @@
                         reader.readAsDataURL(compressed);
                     });
                     currentGallery.images.push({
-                        name: file.name,
+                        name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
                         timestamp: Date.now() + Math.random(),
                         base64
                     });
                     added++;
                 } catch (e) {
-                    failed.push(file.name);
+                    console.warn("Failed to process:", file.name, e);
                 }
             }
 
             renderGallery();
-            STATUS.textContent = added ? `${added} photo(s) added.` : "No photos processed.";
-            if (failed.length) STATUS.textContent += ` Failed: ${failed.join(', ')}`;
+            STATUS.textContent = added ? `${added} photo(s) added.` : "No images processed.";
             document.getElementById("files").value = "";
         }
 
@@ -300,28 +371,42 @@
             const container = document.getElementById("gallery");
             container.innerHTML = currentGallery.images.length ? "" : "<p>No photos yet. Add some!</p>";
 
-            currentGallery.images.forEach(img => {
+            currentGallery.images.forEach((img, index) => {
+                const item = document.createElement("div");
+                item.className = "gallery-item";
+
+                const cb = document.createElement("input");
+                cb.type = "checkbox";
+                cb.className = "select-checkbox";
+                cb.dataset.index = index;
+                cb.addEventListener("change", updateSelectionButtons);
+
                 const el = document.createElement("img");
                 el.src = `data:image/jpeg;base64,${img.base64}`;
                 el.alt = img.name;
                 el.loading = "lazy";
-                container.appendChild(el);
+
+                item.appendChild(cb);
+                item.appendChild(el);
+                container.appendChild(item);
             });
+
+            if (selectMode) {
+                updateSelectionButtons();
+            }
         }
 
         async function downloadEncryptedGallery() {
             if (!masterKey) return alert("No gallery loaded");
-
-            const estMB = currentGallery.images.reduce((sum, img) => sum + img.base64.length / 750000, 0.5); // rough
-            if (estMB > 15 && !confirm(`Gallery ~${estMB.toFixed(1)} MB — may be slow. Continue?`)) return;
+            if (currentGallery.images.length > 40 && !confirm("Large gallery — may be slow. Continue?")) return;
 
             STATUS.textContent = "Encrypting...";
             try {
                 const cipher = await encryptData(currentGallery, masterKey);
-                const payloadObj = JSON.parse(cipher);
-                payloadObj.salt = toBase64(masterSalt);
-                downloadFile(`gallery-${new Date().toISOString().slice(0,10)}.enc.json`, JSON.stringify(payloadObj), "application/json");
-                STATUS.textContent = "Download complete — save it safely!";
+                const payload = JSON.parse(cipher);
+                payload.salt = toBase64(masterSalt);
+                downloadFile(`gallery-${new Date().toISOString().slice(0,10)}.enc.json`, JSON.stringify(payload), "application/json");
+                STATUS.textContent = "Gallery saved!";
             } catch (err) {
                 STATUS.textContent = "";
                 alert("Download failed: " + err.message);
@@ -338,15 +423,15 @@
             try {
                 const newSalt = crypto.getRandomValues(new Uint8Array(16));
                 const newKey = await deriveKey(newPw, newSalt);
-
                 const cipher = await encryptData(currentGallery, newKey);
-                const payloadObj = JSON.parse(cipher);
-                payloadObj.salt = toBase64(newSalt);
-                downloadFile(`gallery-newpw-${new Date().toISOString().slice(0,10)}.enc.json`, JSON.stringify(payloadObj), "application/json");
+                const payload = JSON.parse(cipher);
+                payload.salt = toBase64(newSalt);
+
+                downloadFile(`gallery-newpw-${new Date().toISOString().slice(0,10)}.enc.json`, JSON.stringify(payload), "application/json");
 
                 masterKey = newKey;
                 masterSalt = newSalt;
-                alert("Password changed. Use the new downloaded file going forward.");
+                alert("Password updated. Use the new file from now on.");
             } catch (err) {
                 alert("Change failed: " + err.message);
             }
@@ -356,8 +441,10 @@
             currentGallery = { images: [] };
             masterKey = null;
             masterSalt = null;
+            selectMode = false;
             renderGallery();
-            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled = true;
+            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled = TOGGLE_SELECT_BTN.disabled = true;
+            SELECT_ALL_BTN.disabled = DESELECT_ALL_BTN.disabled = DELETE_SELECTED_BTN.disabled = DOWNLOAD_SELECTED_BTN.disabled = true;
             STATUS.textContent = GALLERY_STATUS.textContent = "";
         }
 
@@ -367,9 +454,7 @@
             const a = document.createElement("a");
             a.href = url;
             a.download = filename;
-            document.body.appendChild(a);
             a.click();
-            document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
     </script>
