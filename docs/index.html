@@ -10,7 +10,7 @@
     <meta name="background-color" content="#f9f9f9">
     <meta name="description" content="Secure offline password-protected photo gallery. Encrypt and view photos locally.">
 
-    <!-- Manifest as data URL (single-file) -->
+    <!-- Manifest as data URL -->
     <link rel="manifest" href="data:application/manifest+json,{
       &quot;name&quot;: &quot;Offline Photo Vault&quot;,
       &quot;short_name&quot;: &quot;PhotoVault&quot;,
@@ -35,9 +35,7 @@
       ]
     }">
 
-    <!-- Lucide icons (vanilla JS) – latest stable as of Feb 2026 -->
     <script src="https://unpkg.com/lucide@0.564.0/dist/umd/lucide.min.js"></script>
-
     <script src="https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js"></script>
     <script src="https://unpkg.com/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -56,79 +54,17 @@
         button.danger:hover { background: #b33d3d; }
         #searchInput { flex: 1 1 300px; min-width: 220px; border: 1px solid #ccc; padding-left: 36px !important; }
         #sortSelect { min-width: 160px; }
-        #gallery { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); 
-            gap: 16px; 
-            margin-top: 1.5rem; 
-        }
-        .gallery-item {
-            position: relative;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background: white;
-        }
-        .gallery-item img { 
-            width: 100%; 
-            height: auto; 
-            display: block;
-            aspect-ratio: 4/3;
-            object-fit: cover;
-            flex: 1;
-        }
-        .gallery-item .caption {
-            padding: 8px 4px;
-            font-size: 0.85rem;
-            color: #333;
-            text-align: center;
-            width: 100%;
-            background: rgba(255,255,255,0.9);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            cursor: pointer;
-            user-select: none;
-        }
-        .gallery-item .caption.editing {
-            background: #fffacd;
-            white-space: normal;
-            overflow: visible;
-            padding: 6px;
-            cursor: text;
-        }
-        .gallery-item .caption input {
-            width: 100%;
-            padding: 4px;
-            font-size: 0.85rem;
-            border: 1px solid #999;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        .select-checkbox {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            width: 24px;
-            height: 24px;
-            accent-color: #238636;
-            cursor: pointer;
-            opacity: 0.9;
-            z-index: 2;
-        }
+        #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 1.5rem; }
+        .gallery-item { position: relative; border-radius: 8px; overflow: hidden; box-shadow: 0 3px 10px rgba(0,0,0,0.12); display: flex; flex-direction: column; align-items: center; background: white; }
+        .gallery-item img { width: 100%; height: auto; display: block; aspect-ratio: 4/3; object-fit: cover; flex: 1; }
+        .gallery-item .caption { padding: 8px 4px; font-size: 0.85rem; color: #333; text-align: center; width: 100%; background: rgba(255,255,255,0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; user-select: none; }
+        .gallery-item .caption.editing { background: #fffacd; white-space: normal; overflow: visible; padding: 6px; cursor: text; }
+        .gallery-item .caption input { width: 100%; padding: 4px; font-size: 0.85rem; border: 1px solid #999; border-radius: 4px; box-sizing: border-box; }
+        .select-checkbox { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; accent-color: #238636; cursor: pointer; opacity: 0.9; z-index: 2; }
         .select-mode .select-checkbox { opacity: 1; }
         #status { color: #444; font-weight: 500; min-height: 1.4rem; margin-top: 8px; }
         .note { font-size: 0.92rem; color: #555; margin: 8px 0; }
-        #noResults {
-            grid-column: 1 / -1;
-            text-align: center;
-            padding: 2rem;
-            color: #777;
-            font-style: italic;
-        }
+        #noResults { grid-column: 1 / -1; text-align: center; padding: 2rem; color: #777; font-style: italic; }
         i { width: 20px; height: 20px; stroke-width: 2.2; flex-shrink: 0; }
         button svg, label i { width: 20px; height: 20px; }
         .search-wrapper { position: relative; flex: 1 1 300px; min-width: 220px; }
@@ -180,7 +116,7 @@
                 <option value="name-desc">Name Z–A</option>
             </select>
             <button id="toggleSelectBtn" disabled onclick="toggleSelectMode()"><i data-lucide="square-check"></i> Select Images</button>
-            <button id="selectAllBtn"   disabled onclick="selectAll(true)"><i data-lucide="check-square"></i> Select All</button>
+            <button id="selectAllBtn" disabled onclick="selectAll(true)"><i data-lucide="check-square"></i> Select All</button>
             <button id="deselectAllBtn" disabled onclick="selectAll(false)"><i data-lucide="square"></i> Deselect All</button>
             <button id="deleteSelectedBtn" class="danger" disabled onclick="deleteSelected()"><i data-lucide="trash-2"></i> Delete Selected</button>
             <button id="downloadSelectedBtn" disabled onclick="downloadSelectedZip()"><i data-lucide="archive"></i> Download Selected (ZIP)</button>
@@ -195,6 +131,7 @@
         let selectMode = false;
         let searchTerm = "";
         let sortMode = localStorage.getItem("gallerySortMode") || "newest";
+        let io = null; // IntersectionObserver – will be nulled on close
 
         const STATUS = document.getElementById("status");
         const GALLERY_STATUS = document.getElementById("galleryStatus");
@@ -209,8 +146,7 @@
         const SEARCH_INPUT = document.getElementById("searchInput");
         const SORT_SELECT = document.getElementById("sortSelect");
 
-        // Lazy loading observer
-        let io = null;
+        // Lazy loading observer – created only once
         if ('IntersectionObserver' in window) {
             io = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
@@ -264,7 +200,6 @@
         function toggleSelectMode() {
             selectMode = !selectMode;
             document.getElementById("gallery").classList.toggle("select-mode", selectMode);
-            TOGGLE_SELECT_BTN.textContent = selectMode ? "Cancel Selection" : "Select Images";
             TOGGLE_SELECT_BTN.innerHTML = selectMode ? '<i data-lucide="x"></i> Cancel' : '<i data-lucide="square-check"></i> Select Images';
             SELECT_ALL_BTN.disabled = !selectMode;
             DESELECT_ALL_BTN.disabled = !selectMode;
@@ -505,8 +440,7 @@
             input.select();
 
             function saveRename() {
-                let newName = input.value.trim();
-                if (!newName) newName = "untitled";
+                let newName = input.value.trim() || "untitled";
                 newName = newName.replace(/\.[a-zA-Z0-9]+$/, "").trim() + ".webp";
 
                 currentGallery.images[originalIndex].name = newName;
@@ -522,37 +456,25 @@
 
             input.addEventListener("blur", saveRename);
             input.addEventListener("keydown", e => {
-                if (e.key === "Enter") {
-                    e.preventDefault();
-                    saveRename();
-                } else if (e.key === "Escape") {
-                    cancelRename();
-                }
+                if (e.key === "Enter") { e.preventDefault(); saveRename(); }
+                if (e.key === "Escape") cancelRename();
             });
         }
 
         function renderGallery() {
             const container = document.getElementById("gallery");
-            container.innerHTML = "";
+            container.innerHTML = ""; // clears previous DOM → allows GC of old images / observers
 
             let sortedImages = [...currentGallery.images];
 
-            if (sortMode === "newest") {
-                sortedImages.sort((a, b) => b.timestamp - a.timestamp);
-            } else if (sortMode === "oldest") {
-                sortedImages.sort((a, b) => a.timestamp - a.timestamp);
-            } else if (sortMode === "name-asc") {
-                sortedImages.sort((a, b) => a.name.localeCompare(b.name));
-            } else if (sortMode === "name-desc") {
-                sortedImages.sort((a, b) => b.name.localeCompare(a.name));
-            }
+            if (sortMode === "newest") sortedImages.sort((a, b) => b.timestamp - a.timestamp);
+            else if (sortMode === "oldest") sortedImages.sort((a, b) => a.timestamp - b.timestamp);
+            else if (sortMode === "name-asc") sortedImages.sort((a, b) => a.name.localeCompare(b.name));
+            else if (sortMode === "name-desc") sortedImages.sort((a, b) => b.name.localeCompare(a.name));
 
             const term = searchTerm.toLowerCase();
             const filtered = sortedImages
-                .map(img => ({
-                    img,
-                    originalIndex: currentGallery.images.indexOf(img)
-                }))
+                .map(img => ({ img, originalIndex: currentGallery.images.indexOf(img) }))
                 .filter(({ img }) => (img.searchName || img.name.toLowerCase()).includes(term));
 
             const sortLabel = {
@@ -563,11 +485,9 @@
             }[sortMode] || "Custom";
 
             if (filtered.length === 0) {
-                if (currentGallery.images.length > 0) {
-                    container.innerHTML = `<div id="noResults">No photos match "${searchTerm}"</div>`;
-                } else {
-                    container.innerHTML = "<p>No photos yet. Add some!</p>";
-                }
+                container.innerHTML = currentGallery.images.length > 0
+                    ? `<div id="noResults">No photos match "${searchTerm}"</div>`
+                    : "<p>No photos yet. Add some!</p>";
             } else {
                 filtered.forEach(({ img, originalIndex }) => {
                     const item = document.createElement("div");
@@ -586,15 +506,9 @@
                     el.height = 180;
                     el.style.aspectRatio = "4/3";
                     el.style.background = "#f0f0f0";
-                    el.src = img.thumbBase64 
-                        ? `data:image/jpeg;base64,${img.thumbBase64}`
-                        : `data:image/jpeg;base64,${img.base64}`;
+                    el.src = img.thumbBase64 ? `data:image/jpeg;base64,${img.thumbBase64}` : `data:image/jpeg;base64,${img.base64}`;
                     el.loading = "lazy";
-
-                    if (img.thumbBase64) {
-                        el.dataset.fullSrc = `data:image/jpeg;base64,${img.base64}`;
-                    }
-
+                    if (img.thumbBase64) el.dataset.fullSrc = `data:image/jpeg;base64,${img.base64}`;
                     if (io) io.observe(el);
 
                     const caption = document.createElement("div");
@@ -616,7 +530,6 @@
 
             if (selectMode) updateSelectionButtons();
 
-            // Re-init Lucide icons after DOM updates
             setTimeout(() => lucide.createIcons(), 0);
         }
 
@@ -657,23 +570,41 @@
         }
 
         function closeGallery() {
-            currentGallery = { images: [] };
+            // Critical cleanup step – break all strong references
+            const gallery = document.getElementById("gallery");
+            gallery.innerHTML = ""; // remove all img elements → release base64 data URLs from DOM
+
+            currentGallery.images = [];           // drop large base64 arrays
+            currentGallery = { images: [] };       // extra safety
             masterKey = null;
             masterSalt = null;
             selectMode = false;
             searchTerm = "";
             SEARCH_INPUT.value = "";
-            if (io) io.disconnect();
+
+            // Observer cleanup
+            if (io) {
+                io.disconnect();
+                io = null;
+            }
+
+            // Clear image src to release memory faster
             document.querySelectorAll('#gallery img').forEach(img => {
                 img.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3C/svg%3E";
                 img.removeAttribute('data-fullSrc');
             });
+
             renderGallery();
-            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled = 
+
+            DOWNLOAD_BTN.disabled = ADD_BTN.disabled = CHANGE_PW_BTN.disabled =
             TOGGLE_SELECT_BTN.disabled = SEARCH_INPUT.disabled = SORT_SELECT.disabled = true;
-            SELECT_ALL_BTN.disabled = DESELECT_ALL_BTN.disabled = 
+            SELECT_ALL_BTN.disabled = DESELECT_ALL_BTN.disabled =
             DELETE_SELECTED_BTN.disabled = DOWNLOAD_SELECTED_BTN.disabled = true;
+
             STATUS.textContent = GALLERY_STATUS.textContent = "";
+
+            // Optional: hint GC (not guaranteed, but harmless)
+            if (window.gc) window.gc();
         }
 
         function downloadFile(filename, content, type) {
@@ -683,37 +614,35 @@
             a.href = url;
             a.download = filename;
             a.click();
-            URL.revokeObjectURL(url);
+            setTimeout(() => {
+                URL.revokeObjectURL(url); // safe cleanup (even though short-lived)
+                a.remove();
+            }, 100);
         }
 
         // Initial disable
         SEARCH_INPUT.disabled = true;
         SORT_SELECT.disabled = true;
 
-        // ────────────────────────────────────────────────
-        // Lucide icons initialization
-        // ────────────────────────────────────────────────
+        // Lucide init
         function initIcons() {
             lucide.createIcons();
         }
 
-        // Call on load and after renders
         document.addEventListener('DOMContentLoaded', initIcons);
 
-        // Override renderGallery to re-init icons
+        // Re-init icons after render
         const originalRender = renderGallery;
         renderGallery = function(...args) {
             originalRender.apply(this, args);
             setTimeout(initIcons, 50);
         };
 
-        // ────────────────────────────────────────────────
-        // PWA Service Worker (inline)
-        // ────────────────────────────────────────────────
+        // PWA Service Worker (minimal, cache-friendly)
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 const swCode = `
-                    const CACHE_NAME = 'photovault-v1-${Date.now()}'; // bust cache on updates
+                    const CACHE_NAME = 'photovault-v1-${Date.now()}';
                     const PRECACHE_URLS = [
                         './',
                         'https://unpkg.com/lucide@0.564.0/dist/umd/lucide.min.js',
@@ -725,38 +654,30 @@
 
                     self.addEventListener('install', e => {
                         e.waitUntil(
-                            caches.open(CACHE_NAME)
-                                .then(cache => cache.addAll(PRECACHE_URLS))
+                            caches.open(CACHE_NAME).then(cache => cache.addAll(PRECACHE_URLS))
                                 .then(() => self.skipWaiting())
                         );
                     });
 
-                    self.addEventListener('activate', e => {
-                        e.waitUntil(self.clients.claim());
-                    });
+                    self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
                     self.addEventListener('fetch', e => {
                         if (PRECACHE_URLS.some(u => e.request.url.includes(u))) {
-                            e.respondWith(
-                                caches.match(e.request).then(r => r || fetch(e.request))
-                            );
+                            e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
                         } else if (e.request.mode === 'navigate') {
-                            e.respondWith(
-                                fetch(e.request).catch(() => caches.match('./'))
-                            );
+                            e.respondWith(fetch(e.request).catch(() => caches.match('./')));
                         }
                     });
                 `;
                 const blob = new Blob([swCode], { type: 'application/javascript' });
                 const swUrl = URL.createObjectURL(blob);
-
                 navigator.serviceWorker.register(swUrl, { scope: './' })
-                    .then(reg => console.log('Service Worker registered'))
-                    .catch(err => console.warn('Service Worker failed', err));
+                    .catch(err => console.warn('SW registration failed', err));
+                // Revoke immediately – SW blob is short-lived
+                setTimeout(() => URL.revokeObjectURL(swUrl), 1000);
             });
         }
 
-        // Optional: capture install prompt
         let deferredPrompt;
         window.addEventListener('beforeinstallprompt', e => {
             e.preventDefault();
