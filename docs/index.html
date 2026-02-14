@@ -3,7 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Password-Protected Photo Gallery (Offline)</title>
+    <title>Offline Photo Vault</title>
+
+    <!-- PWA essentials -->
+    <meta name="theme-color" content="#238636">
+    <meta name="background-color" content="#f9f9f9">
+    <meta name="description" content="Secure offline password-protected photo gallery. Encrypt and view photos locally.">
+
+    <!-- Manifest as data URL (single-file) -->
+    <link rel="manifest" href="data:application/manifest+json,{
+      &quot;name&quot;: &quot;Offline Photo Vault&quot;,
+      &quot;short_name&quot;: &quot;PhotoVault&quot;,
+      &quot;description&quot;: &quot;Password-protected offline photo gallery&quot;,
+      &quot;start_url&quot;: &quot;./&quot;,
+      &quot;display&quot;: &quot;standalone&quot;,
+      &quot;background_color&quot;: &quot;#f9f9f9&quot;,
+      &quot;theme_color&quot;: &quot;#238636&quot;,
+      &quot;icons&quot;: [
+        {
+          &quot;src&quot;: &quot;data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;rect width='100' height='100' fill='%23238636'/%&gt;&lt;text x='50' y='65' font-size='60' text-anchor='middle' fill='white'&gt;📷&lt;/text&gt;&lt;/svg&gt;&quot;,
+          &quot;sizes&quot;: &quot;192x192&quot;,
+          &quot;type&quot;: &quot;image/svg+xml&quot;,
+          &quot;purpose&quot;: &quot;any maskable&quot;
+        },
+        {
+          &quot;src&quot;: &quot;data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'&gt;&lt;rect width='512' height='512' fill='%23238636'/%&gt;&lt;text x='256' y='340' font-size='300' text-anchor='middle' fill='white'&gt;📷&lt;/text&gt;&lt;/svg&gt;&quot;,
+          &quot;sizes&quot;: &quot;512x512&quot;,
+          &quot;type&quot;: &quot;image/svg+xml&quot;,
+          &quot;purpose&quot;: &quot;any maskable&quot;
+        }
+      ]
+    }">
+
+    <!-- Lucide icons (vanilla JS) – latest stable as of Feb 2026 -->
+    <script src="https://unpkg.com/lucide@0.564.0/dist/umd/lucide.min.js"></script>
+
     <script src="https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js"></script>
     <script src="https://unpkg.com/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -15,12 +49,12 @@
         section { margin: 2rem 0; padding: 1.5rem; border: 1px solid #ddd; border-radius: 10px; background: #f9f9f9; }
         .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
         input, button, label, select { padding: 10px; font-size: 1rem; border-radius: 6px; }
-        button { background: #238636; color: white; border: none; cursor: pointer; font-weight: 600; }
+        button { background: #238636; color: white; border: none; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
         button:hover { background: #2ea043; }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
         button.danger { background: #c94a4a; }
         button.danger:hover { background: #b33d3d; }
-        #searchInput { flex: 1 1 300px; min-width: 220px; border: 1px solid #ccc; }
+        #searchInput { flex: 1 1 300px; min-width: 220px; border: 1px solid #ccc; padding-left: 36px !important; }
         #sortSelect { min-width: 160px; }
         #gallery { 
             display: grid; 
@@ -56,7 +90,7 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            cursor: pointer;                /* NEW: indicate clickable */
+            cursor: pointer;
             user-select: none;
         }
         .gallery-item .caption.editing {
@@ -95,20 +129,27 @@
             color: #777;
             font-style: italic;
         }
+        i { width: 20px; height: 20px; stroke-width: 2.2; flex-shrink: 0; }
+        button svg, label i { width: 20px; height: 20px; }
+        .search-wrapper { position: relative; flex: 1 1 300px; min-width: 220px; }
+        .search-wrapper i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #666; pointer-events: none; }
     </style>
 </head>
 <body>
 
-    <h1>Password-Protected Offline Photo Gallery</h1>
+    <h1>Offline Photo Vault</h1>
 
     <section>
         <h2>1. Gallery Management</h2>
         <div class="controls">
-            <label><input type="file" id="loadGalleryFile" accept=".enc.json"> Load Gallery</label>
-            <button onclick="initializeNewGallery()">New Empty Gallery</button>
-            <button id="downloadBtn" disabled onclick="downloadEncryptedGallery()">Download Gallery</button>
-            <button id="changePwBtn" disabled onclick="changePassword()">Change Password</button>
-            <button onclick="closeGallery()">Close Gallery</button>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i data-lucide="folder-open"></i> Load Gallery
+                <input type="file" id="loadGalleryFile" accept=".enc.json" style="display:none;">
+            </label>
+            <button onclick="initializeNewGallery()"><i data-lucide="plus-circle"></i> New Empty Gallery</button>
+            <button id="downloadBtn" disabled onclick="downloadEncryptedGallery()"><i data-lucide="download"></i> Download Gallery</button>
+            <button id="changePwBtn" disabled onclick="changePassword()"><i data-lucide="lock"></i> Change Password</button>
+            <button onclick="closeGallery()"><i data-lucide="x-circle"></i> Close Gallery</button>
         </div>
         <div id="galleryStatus" class="note"></div>
     </section>
@@ -116,8 +157,11 @@
     <section>
         <h2>2. Add Photos</h2>
         <div class="controls">
-            <input type="file" id="files" multiple accept="image/*">
-            <button onclick="addPhotos()" id="addBtn" disabled>Add Photos</button>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                <i data-lucide="image-plus"></i> Choose Photos
+                <input type="file" id="files" multiple accept="image/*" style="display:none;">
+            </label>
+            <button onclick="addPhotos()" id="addBtn" disabled><i data-lucide="plus"></i> Add Photos</button>
         </div>
         <div id="status"></div>
     </section>
@@ -125,18 +169,21 @@
     <section>
         <h2>Your Photos</h2>
         <div class="controls" style="margin-bottom: 1rem; gap: 16px; flex-wrap: wrap;">
-            <input type="text" id="searchInput" placeholder="Search by filename..." disabled>
+            <div class="search-wrapper">
+                <i data-lucide="search"></i>
+                <input type="text" id="searchInput" placeholder="Search by filename..." disabled>
+            </div>
             <select id="sortSelect" disabled>
                 <option value="newest">Newest first</option>
                 <option value="oldest">Oldest first</option>
                 <option value="name-asc">Name A–Z</option>
                 <option value="name-desc">Name Z–A</option>
             </select>
-            <button id="toggleSelectBtn" disabled onclick="toggleSelectMode()">Select Images</button>
-            <button id="selectAllBtn"   disabled onclick="selectAll(true)">Select All</button>
-            <button id="deselectAllBtn" disabled onclick="selectAll(false)">Deselect All</button>
-            <button id="deleteSelectedBtn" class="danger" disabled onclick="deleteSelected()">Delete Selected</button>
-            <button id="downloadSelectedBtn" disabled onclick="downloadSelectedZip()">Download Selected (ZIP)</button>
+            <button id="toggleSelectBtn" disabled onclick="toggleSelectMode()"><i data-lucide="square-check"></i> Select Images</button>
+            <button id="selectAllBtn"   disabled onclick="selectAll(true)"><i data-lucide="check-square"></i> Select All</button>
+            <button id="deselectAllBtn" disabled onclick="selectAll(false)"><i data-lucide="square"></i> Deselect All</button>
+            <button id="deleteSelectedBtn" class="danger" disabled onclick="deleteSelected()"><i data-lucide="trash-2"></i> Delete Selected</button>
+            <button id="downloadSelectedBtn" disabled onclick="downloadSelectedZip()"><i data-lucide="archive"></i> Download Selected (ZIP)</button>
         </div>
         <div id="gallery"></div>
     </section>
@@ -218,6 +265,7 @@
             selectMode = !selectMode;
             document.getElementById("gallery").classList.toggle("select-mode", selectMode);
             TOGGLE_SELECT_BTN.textContent = selectMode ? "Cancel Selection" : "Select Images";
+            TOGGLE_SELECT_BTN.innerHTML = selectMode ? '<i data-lucide="x"></i> Cancel' : '<i data-lucide="square-check"></i> Select Images';
             SELECT_ALL_BTN.disabled = !selectMode;
             DESELECT_ALL_BTN.disabled = !selectMode;
             updateSelectionButtons();
@@ -265,7 +313,6 @@
             }
         }
 
-        // Crypto functions (unchanged)
         async function deriveKey(password, salt) {
             const argon = await argon2.hash({
                 pass: password,
@@ -443,52 +490,46 @@
         }
 
         function startRename(caption, img, originalIndex) {
-    if (caption.classList.contains("editing")) return;
+            if (caption.classList.contains("editing")) return;
 
-    caption.classList.add("editing");
-    const input = document.createElement("input");
-    input.type = "text";
-    // Show name without extension for cleaner editing
-    input.value = img.name.replace(/\.[a-zA-Z0-9]+$/, "") || "untitled";
-    input.maxLength = 120;
-    input.spellcheck = false;
+            caption.classList.add("editing");
+            const input = document.createElement("input");
+            input.type = "text";
+            input.value = img.name.replace(/\.[a-zA-Z0-9]+$/, "") || "untitled";
+            input.maxLength = 120;
+            input.spellcheck = false;
 
-    caption.innerHTML = "";
-    caption.appendChild(input);
-    input.focus();
-    input.select();
+            caption.innerHTML = "";
+            caption.appendChild(input);
+            input.focus();
+            input.select();
 
-    function saveRename() {
-        let newName = input.value.trim();
-        if (!newName) {
-            newName = "untitled";
+            function saveRename() {
+                let newName = input.value.trim();
+                if (!newName) newName = "untitled";
+                newName = newName.replace(/\.[a-zA-Z0-9]+$/, "").trim() + ".webp";
+
+                currentGallery.images[originalIndex].name = newName;
+                currentGallery.images[originalIndex].searchName = newName.toLowerCase();
+
+                renderGallery();
+                STATUS.textContent = `Renamed to "${newName}". Remember to save the gallery.`;
+            }
+
+            function cancelRename() {
+                renderGallery();
+            }
+
+            input.addEventListener("blur", saveRename);
+            input.addEventListener("keydown", e => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    saveRename();
+                } else if (e.key === "Escape") {
+                    cancelRename();
+                }
+            });
         }
-
-        // Always force .webp extension – strip any user-typed extension first
-        newName = newName.replace(/\.[a-zA-Z0-9]+$/, "").trim() + ".webp";
-
-        // Update model
-        currentGallery.images[originalIndex].name = newName;
-        currentGallery.images[originalIndex].searchName = newName.toLowerCase();
-
-        renderGallery();
-        STATUS.textContent = `Renamed to "${newName}". Remember to save the gallery.`;
-    }
-
-    function cancelRename() {
-        renderGallery();
-    }
-
-    input.addEventListener("blur", saveRename);
-    input.addEventListener("keydown", e => {
-        if (e.key === "Enter") {
-            e.preventDefault();
-            saveRename();
-        } else if (e.key === "Escape") {
-            cancelRename();
-        }
-    });
-}
 
         function renderGallery() {
             const container = document.getElementById("gallery");
@@ -499,7 +540,7 @@
             if (sortMode === "newest") {
                 sortedImages.sort((a, b) => b.timestamp - a.timestamp);
             } else if (sortMode === "oldest") {
-                sortedImages.sort((a, b) => a.timestamp - b.timestamp);
+                sortedImages.sort((a, b) => a.timestamp - a.timestamp);
             } else if (sortMode === "name-asc") {
                 sortedImages.sort((a, b) => a.name.localeCompare(b.name));
             } else if (sortMode === "name-desc") {
@@ -574,6 +615,9 @@
                 : `${currentGallery.images.length} photo${currentGallery.images.length !== 1 ? 's' : ''} (${sortLabel})`;
 
             if (selectMode) updateSelectionButtons();
+
+            // Re-init Lucide icons after DOM updates
+            setTimeout(() => lucide.createIcons(), 0);
         }
 
         async function downloadEncryptedGallery() {
@@ -645,6 +689,79 @@
         // Initial disable
         SEARCH_INPUT.disabled = true;
         SORT_SELECT.disabled = true;
+
+        // ────────────────────────────────────────────────
+        // Lucide icons initialization
+        // ────────────────────────────────────────────────
+        function initIcons() {
+            lucide.createIcons();
+        }
+
+        // Call on load and after renders
+        document.addEventListener('DOMContentLoaded', initIcons);
+
+        // Override renderGallery to re-init icons
+        const originalRender = renderGallery;
+        renderGallery = function(...args) {
+            originalRender.apply(this, args);
+            setTimeout(initIcons, 50);
+        };
+
+        // ────────────────────────────────────────────────
+        // PWA Service Worker (inline)
+        // ────────────────────────────────────────────────
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                const swCode = `
+                    const CACHE_NAME = 'photovault-v1-${Date.now()}'; // bust cache on updates
+                    const PRECACHE_URLS = [
+                        './',
+                        'https://unpkg.com/lucide@0.564.0/dist/umd/lucide.min.js',
+                        'https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/dist/argon2-bundled.min.js',
+                        'https://unpkg.com/browser-image-compression@2.0.2/dist/browser-image-compression.js',
+                        'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+                        'https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js'
+                    ];
+
+                    self.addEventListener('install', e => {
+                        e.waitUntil(
+                            caches.open(CACHE_NAME)
+                                .then(cache => cache.addAll(PRECACHE_URLS))
+                                .then(() => self.skipWaiting())
+                        );
+                    });
+
+                    self.addEventListener('activate', e => {
+                        e.waitUntil(self.clients.claim());
+                    });
+
+                    self.addEventListener('fetch', e => {
+                        if (PRECACHE_URLS.some(u => e.request.url.includes(u))) {
+                            e.respondWith(
+                                caches.match(e.request).then(r => r || fetch(e.request))
+                            );
+                        } else if (e.request.mode === 'navigate') {
+                            e.respondWith(
+                                fetch(e.request).catch(() => caches.match('./'))
+                            );
+                        }
+                    });
+                `;
+                const blob = new Blob([swCode], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(blob);
+
+                navigator.serviceWorker.register(swUrl, { scope: './' })
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.warn('Service Worker failed', err));
+            });
+        }
+
+        // Optional: capture install prompt
+        let deferredPrompt;
+        window.addEventListener('beforeinstallprompt', e => {
+            e.preventDefault();
+            deferredPrompt = e;
+        });
     </script>
 </body>
 </html>
