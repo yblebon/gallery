@@ -485,6 +485,9 @@
         <i data-lucide="image-plus"></i> Add Photos
         <input type="file" id="files" multiple accept="image/*">
       </label>
+      <button class="btn-ghost" id="addLinkBtn" disabled onclick="addLink()">
+        <i data-lucide="link"></i> Add Link
+      </button>
     </div>
 
     <div class="tb-sep"></div>
@@ -931,6 +934,7 @@ window.addEventListener("keydown", e => {
 //  Controls enable / disable
 // ──────────────────────────────────────────────────────────────
 function enableControls() {
+  $("addLinkBtn").disabled = false;
   DOWNLOAD_BTN.disabled = CHANGE_PW_BTN.disabled =
   TOGGLE_SELECT_BTN.disabled = SEARCH_INPUT.disabled = SORT_SELECT.disabled = false;
   $("addLabel").classList.remove("disabled");
@@ -941,6 +945,7 @@ function enableControls() {
 }
 
 function disableControls() {
+  $("addLinkBtn").disabled = true;
   DOWNLOAD_BTN.disabled = CHANGE_PW_BTN.disabled =
   TOGGLE_SELECT_BTN.disabled = SEARCH_INPUT.disabled = SORT_SELECT.disabled = true;
   $("addLabel").classList.add("disabled");
@@ -1022,14 +1027,17 @@ async function downloadSelectedZip() {
   if (!cbs.length) return;
   progressStart();
   const zip = new JSZip();
+  const linkLines = [];
   cbs.forEach(cb => {
     const i   = parseInt(cb.dataset.index, 10);
     const img = currentGallery.images[i];
+    if (isLink(img)) { linkLines.push(`${img.name}\t${img.url}`); return; }
     const bin = atob(img.base64);
     const u8  = new Uint8Array(bin.length);
     for (let j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
     zip.file(img.name || `photo-${i+1}.jpg`, u8);
   });
+  if (linkLines.length) zip.file("links.txt", linkLines.join("\n") + "\n");
   let url;
   try {
     const blob = await zip.generateAsync({ type: "blob" });
@@ -1154,6 +1162,85 @@ $("loadGalleryFile").addEventListener("change", async e => {
 });
 
 // ──────────────────────────────────────────────────────────────
+//  Web links (any media). YouTube → YouTube thumbnail; anything else →
+//  generated tile showing the file extension (MP4, PDF, …) or WEB.
+//  Only http(s) URLs are accepted.
+// ──────────────────────────────────────────────────────────────
+const isLink = it => it && it.type === "link";
+
+function parseLinkUrl(raw) {
+  let u;
+  try { u = new URL(String(raw).trim()); } catch { return null; }
+  return (u.protocol === "http:" || u.protocol === "https:") ? u : null;
+}
+
+function youtubeId(u) {
+  const h = u.hostname.replace(/^(www|m|music)\./, "");
+  let id = null;
+  if (h === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+  else if (h === "youtube.com" || h === "youtube-nocookie.com") {
+    if (u.pathname === "/watch") id = u.searchParams.get("v");
+    else { const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/]+)/); if (m) id = m[1]; }
+  }
+  return id && /^[\w-]{6,20}$/.test(id) ? id : null;
+}
+
+const EXT_KIND = {
+  video:   ["mp4","webm","mov","mkv","avi","m4v","ogv","wmv","flv","mpg","mpeg","m3u8"],
+  audio:   ["mp3","wav","ogg","flac","m4a","aac","opus"],
+  image:   ["jpg","jpeg","png","gif","webp","svg","avif","bmp"],
+  doc:     ["pdf","doc","docx","xls","xlsx","ppt","pptx","txt","md","epub"],
+  archive: ["zip","rar","7z","tar","gz"]
+};
+const KIND_COLOR = { video:"#6d28d9", audio:"#0e7490", image:"#047857",
+                     doc:"#b91c1c", archive:"#b45309", web:"#334155" };
+
+function linkExt(u) {
+  const m = u.pathname.match(/\.([a-z0-9]{1,5})$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+
+function linkTileSvg(label, kind, host) {
+  const esc = t => t.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">` +
+    `<rect width="320" height="320" fill="${KIND_COLOR[kind] || KIND_COLOR.web}"/>` +
+    `<text x="160" y="175" text-anchor="middle" font-family="monospace" font-weight="700" ` +
+    `font-size="${label.length > 3 ? 64 : 84}" fill="#fff">${esc(label)}</text>` +
+    `<text x="160" y="228" text-anchor="middle" font-family="monospace" font-size="20" ` +
+    `fill="#fff" fill-opacity="0.7">${esc(host.slice(0, 26))}</text></svg>`;
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+function linkThumb(item) {
+  if (item.ytId) return `https://img.youtube.com/vi/${item.ytId}/hqdefault.jpg`;
+  return linkTileSvg(item.ext ? item.ext.toUpperCase() : "WEB", item.kind, item.host || "");
+}
+
+function makeLinkItem(u) {
+  const ytId = youtubeId(u);
+  const ext  = ytId ? "" : linkExt(u);
+  const kind = ytId ? "video"
+    : (Object.keys(EXT_KIND).find(k => EXT_KIND[k].includes(ext)) || "web");
+  const host = u.hostname.replace(/^www\./, "");
+  const last = decodeURIComponent(u.pathname.split("/").filter(Boolean).pop() || "");
+  const name = (ytId ? `YouTube ${ytId}` : (last || host)).slice(0, 100);
+  return { type: "link", url: u.href, ytId, ext, kind, host, name,
+           searchName: (name + " " + host).toLowerCase(), timestamp: Date.now() + Math.random() * 1000 };
+}
+
+function addLink() {
+  if (!masterKey) { toast("Open a vault first.", "error"); return; }
+  const raw = prompt("Paste a web link (http/https) — YouTube, video, PDF, any page:");
+  if (raw === null || !raw.trim()) return;
+  const u = parseLinkUrl(raw);
+  if (!u) { toast("Invalid link — only http(s) URLs are accepted.", "error"); return; }
+  currentGallery.images.push(makeLinkItem(u));
+  markUnsaved();
+  renderGallery();
+  toast("Link added. Remember to save.", "success");
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Add photos
 // ──────────────────────────────────────────────────────────────
 $("files").addEventListener("change", async e => {
@@ -1206,14 +1293,17 @@ function startRename(capEl, imgObj, origIndex) {
   if (capEl.classList.contains("editing")) return;
   capEl.classList.add("editing");
   const input = Object.assign(document.createElement("input"), {
-    type: "text", value: imgObj.name.replace(/\.[a-z]+$/i, ""),
+    type: "text", value: isLink(imgObj) ? imgObj.name : imgObj.name.replace(/\.[a-z]+$/i, ""),
     maxLength: 100, spellcheck: false
   });
   capEl.innerHTML = ""; capEl.appendChild(input);
   input.focus(); input.select();
 
   const save = () => {
-    const name = ((input.value.trim() || "photo").replace(/\.[a-z]+$/i, "")) + ".jpg";
+    const item = currentGallery.images[origIndex];
+    const name = isLink(item)
+      ? (input.value.trim() || item.host || "link").slice(0, 100)
+      : ((input.value.trim() || "photo").replace(/\.[a-z]+$/i, "")) + ".jpg";
     currentGallery.images[origIndex].name = name;
     currentGallery.images[origIndex].searchName = name.toLowerCase();
     markUnsaved(); renderGallery();
@@ -1252,7 +1342,7 @@ function renderGallery() {
     : indexed;
 
   // Store for viewer navigation — share same sorted+filtered view
-  viewerImages = filtered.map(o => o.img);
+  viewerImages = filtered.filter(o => !isLink(o.img)).map(o => o.img);
 
   if (!filtered.length) {
     GALLERY_EL.innerHTML = currentGallery.images.length
@@ -1282,18 +1372,28 @@ function renderGallery() {
 
     const pic = document.createElement("img");
     pic.alt = img.name;
+    if (isLink(img)) {
+      pic.src = linkThumb(img);
+      pic.referrerPolicy = "no-referrer";
+      pic.addEventListener("error", () => { pic.src = linkTileSvg("WEB", "web", img.host || ""); }, { once: true });
+      pic.addEventListener("click", () => {
+        if (selectMode) return;
+        const u = parseLinkUrl(img.url);
+        if (u) window.open(u.href, "_blank", "noopener,noreferrer");
+      });
+    } else
     pic.src = img.thumbBase64
       ? `data:image/jpeg;base64,${img.thumbBase64}`
       : `data:image/jpeg;base64,${img.base64}`;
     if (img.thumbBase64) pic.dataset.src = `data:image/jpeg;base64,${img.base64}`;
     if (io) io.observe(pic);
 
-    pic.addEventListener("click", () => { if (!selectMode) openViewer(viewerImages, di); });
+    if (!isLink(img)) pic.addEventListener("click", () => { if (!selectMode) openViewer(viewerImages, viewerImages.indexOf(img)); });
     wrap.appendChild(pic);
 
     const cap = document.createElement("div");
     cap.className = "caption"; cap.textContent = img.name || "untitled";
-    cap.title = "Double-click to rename";
+    cap.title = isLink(img) ? `${img.url}\nDouble-click to rename` : "Double-click to rename";
     cap.addEventListener("dblclick", () => startRename(cap, img, origIndex));
 
     item.append(cb, wrap, cap);
