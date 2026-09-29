@@ -129,6 +129,8 @@
       border: 1px solid var(--border);
       padding: 4px 10px; border-radius: 100px;
     }
+    #vaultLabel.renamable { cursor: pointer; }
+    #vaultLabel.renamable:hover { color: var(--text); }
 
     /* ─── Toolbar ─── */
     .toolbar {
@@ -458,7 +460,7 @@
     </svg>
   </div>
   <h1>Photo Vault</h1>
-  <span id="vaultLabel">NO VAULT OPEN</span>
+  <span id="vaultLabel" role="button" tabindex="0">NO VAULT OPEN</span>
 </header>
 
 <div class="app-wrap">
@@ -617,7 +619,8 @@
 // ──────────────────────────────────────────────────────────────
 //  State
 // ──────────────────────────────────────────────────────────────
-let currentGallery = { images: [] };
+let currentGallery = { name: "", images: [] };
+let vaultFallbackLabel = "NEW VAULT";
 let masterKey   = null;
 let masterSalt  = null;
 let selectMode  = false;
@@ -1044,6 +1047,45 @@ async function downloadSelectedZip() {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Gallery name + backup file nomenclature
+//  ${APP}-${NAME}-${VERSION}-<UTC yyyymmddThhmmZ>.enc.json
+//  (NAME segment is omitted when the gallery has no name)
+// ──────────────────────────────────────────────────────────────
+const APP     = "photo-vault";
+const VERSION = "v1.0.0";
+
+function slugify(str) {
+  return String(str || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+}
+function utcStamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").slice(0, 13) + "Z";
+}
+function backupFileName() {
+  return [APP, slugify(currentGallery.name), VERSION, utcStamp()]
+    .filter(Boolean).join("-") + ".enc.json";
+}
+function updateVaultLabel() {
+  VAULT_LABEL.textContent = (currentGallery.name || vaultFallbackLabel).toUpperCase();
+  VAULT_LABEL.classList.toggle("renamable", !!masterKey);
+  VAULT_LABEL.title = masterKey ? "Click to name this gallery" : "";
+}
+function renameGallery() {
+  if (!masterKey) return;
+  const v = prompt("Gallery name (used in the backup file name):", currentGallery.name || "");
+  if (v === null) return;
+  const name = v.trim().slice(0, 80);
+  if (name === (currentGallery.name || "")) return;
+  currentGallery.name = name;
+  updateVaultLabel();
+  markUnsaved();
+}
+VAULT_LABEL.addEventListener("click", renameGallery);
+VAULT_LABEL.addEventListener("keydown", e => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); renameGallery(); }
+});
+
+// ──────────────────────────────────────────────────────────────
 //  New vault
 // ──────────────────────────────────────────────────────────────
 async function initializeNewGallery() {
@@ -1058,13 +1100,14 @@ async function initializeNewGallery() {
   try {
     masterSalt = crypto.getRandomValues(new Uint8Array(16));
     masterKey  = await deriveKey(pw, masterSalt);
-    currentGallery = { images: [] };
+    currentGallery = { name: "", images: [] };
+    vaultFallbackLabel = "NEW VAULT";
     enableControls();
     SORT_SELECT.value = sortMode;
     renderGallery();
-    VAULT_LABEL.textContent = "NEW VAULT";
+    updateVaultLabel();
     markSaved();
-    toast("Vault created — add photos and save.", "success");
+    toast("Vault created — click the label to name it, add photos and save.", "success");
   } catch (err) {
     toast("Failed to create vault: " + err.message, "error");
   } finally {
@@ -1096,7 +1139,9 @@ $("loadGalleryFile").addEventListener("change", async e => {
     enableControls();
     SORT_SELECT.value = sortMode;
     renderGallery();
-    VAULT_LABEL.textContent = file.name.toUpperCase();
+    currentGallery.name = typeof currentGallery.name === "string" ? currentGallery.name : "";
+    vaultFallbackLabel = file.name;
+    updateVaultLabel();
     markSaved();
     toast(`Vault opened — ${currentGallery.images.length} photo${currentGallery.images.length!==1?"s":""}`, "success", 4000);
   } catch (err) {
@@ -1283,7 +1328,7 @@ async function downloadEncryptedGallery() {
     const blob    = new Blob([JSON.stringify(payload)], { type: "application/json" });
     url = URL.createObjectURL(blob);
     Object.assign(document.createElement("a"), {
-      href: url, download: `vault-${new Date().toISOString().slice(0,10)}.enc.json`
+      href: url, download: backupFileName()
     }).click();
     markSaved();
     toast("Vault saved.", "success");
@@ -1318,7 +1363,7 @@ async function changePassword() {
     const blob    = new Blob([JSON.stringify(payload)], { type: "application/json" });
     url = URL.createObjectURL(blob);
     Object.assign(document.createElement("a"), {
-      href: url, download: `vault-newpw-${new Date().toISOString().slice(0,10)}.enc.json`
+      href: url, download: backupFileName()
     }).click();
     masterKey = newKey; masterSalt = newSalt;
     markSaved();
@@ -1337,14 +1382,15 @@ async function changePassword() {
 function closeGallery() {
   if (hasUnsaved && !confirm("You have unsaved changes. Close anyway?")) return;
   GALLERY_EL.innerHTML = "";
-  currentGallery = { images: [] };
+  currentGallery = { name: "", images: [] };
   masterKey = masterSalt = null;
   selectMode = false;               // FIX #5
   searchTerm = "";
   viewerImages = []; viewerIndex = -1;
   SEARCH_INPUT.value = "";
   SELECTION_BAR.classList.add("hidden");
-  VAULT_LABEL.textContent = "NO VAULT OPEN";
+  vaultFallbackLabel = "NO VAULT OPEN";
+  updateVaultLabel();
   GALLERY_STATUS_EL.textContent = "";
   if (io) { io.disconnect(); io = null; } // FIX #6 — proper teardown
   disableControls();
